@@ -1,0 +1,345 @@
+# ============================================================
+# ContextCore - Docker Compose
+# File: docker-compose.yml (at the root of your project)
+#
+# This starts all infrastructure services locally.
+# Run with: docker compose up -d
+# Stop with: docker compose down
+# ============================================================
+
+# ─── SHARED NETWORK ─────────────────────────────────────────
+# All services talk to each other on this internal network
+networks:
+  contextcore-network:
+    driver: bridge
+
+# ─── NAMED VOLUMES ──────────────────────────────────────────
+# These persist data even when containers are stopped
+volumes:
+  postgres-data:
+  redis-data:
+  qdrant-data:
+  kafka-data:
+  zookeeper-data:
+  minio-data:
+
+# ============================================================
+# SERVICES
+# ============================================================
+services:
+
+  # ──────────────────────────────────────────────────────────
+  # POSTGRES — Primary relational database
+  # ──────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: contextcore-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./infra/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - contextcore-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────
+  # REDIS — Cache + rate limiting
+  # ──────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: contextcore-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - contextcore-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────
+  # ZOOKEEPER — Required by Kafka to manage cluster state
+  # ──────────────────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: contextcore-zookeeper
+    restart: unless-stopped
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper-data:/var/lib/zookeeper/data
+    networks:
+      - contextcore-network
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/localhost/2181 && echo -e ruok >&3 && cat <&3'"]
+      interval: 20s
+      timeout: 15s
+      retries: 15
+      start_period: 60s
+
+  # ──────────────────────────────────────────────────────────
+  # KAFKA — Message queue for the ingestion pipeline
+  # ──────────────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: contextcore-kafka
+    restart: unless-stopped
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    ports:
+      - "29092:29092"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    networks:
+      - contextcore-network
+    healthcheck:
+      test: ["CMD-SHELL", "kafka-broker-api-versions --bootstrap-server localhost:9092"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+
+  # ──────────────────────────────────────────────────────────
+  # QDRANT — Vector database for embeddings
+  # ──────────────────────────────────────────────────────────
+  qdrant:
+    image: qdrant/qdrant:v1.7.4
+    container_name: contextcore-qdrant
+    restart: unless-stopped
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    networks:
+      - contextcore-network
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:6333/healthz || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+
+  # ──────────────────────────────────────────────────────────
+  # KAFKA UI — Visual dashboard to see Kafka topics/messages
+  # Access at: http://localhost:8080
+  # ──────────────────────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: contextcore-kafka-ui
+    restart: unless-stopped
+    depends_on:
+      - kafka
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+    ports:
+      - "8080:8080"
+    networks:
+      - contextcore-network
+
+  # ──────────────────────────────────────────────────────────
+  # MINIO — Local S3-compatible object storage
+  # Dashboard at: http://localhost:9001
+  # Username: minioadmin / Password: minioadmin
+  # ──────────────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: contextcore-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    networks:
+      - contextcore-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ──────────────────────────────────────────────────────────
+  # GATEWAY SERVICE — Main API entry point
+  # ──────────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    container_name: contextcore-gateway
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/gateway/app:/app/app
+    networks:
+      - contextcore-network
+
+  # ──────────────────────────────────────────────────────────
+  # INGESTION SERVICE — File upload + Kafka producer
+  # ──────────────────────────────────────────────────────────
+  ingestion:
+    build:
+      context: ./services/ingestion
+      dockerfile: Dockerfile
+    container_name: contextcore-ingestion
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      MINIO_ENDPOINT: http://minio:9000
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/ingestion/app:/app/app
+    networks:
+      - contextcore-network
+
+  # ──────────────────────────────────────────────────────────
+  # PROCESSING SERVICE — Kafka consumer + pipeline worker
+  # ──────────────────────────────────────────────────────────
+  processing:
+    build:
+      context: ./services/processing
+      dockerfile: Dockerfile
+    container_name: contextcore-processing
+    restart: unless-stopped
+    depends_on:
+      - kafka
+      - postgres
+      - qdrant
+      - minio
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      KAFKA_BOOTSTRAP_SERVERS: kafka:9092
+      QDRANT_HOST: qdrant
+      MINIO_ENDPOINT: http://minio:9000
+    volumes:
+      - ./services/processing/app:/app/app
+    networks:
+      - contextcore-network
+
+  # ──────────────────────────────────────────────────────────
+  # QUERY SERVICE — Semantic search + RAG
+  # ──────────────────────────────────────────────────────────
+  query:
+    build:
+      context: ./services/query
+      dockerfile: Dockerfile
+    container_name: contextcore-query
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      POSTGRES_HOST: postgres
+      REDIS_HOST: redis
+      QDRANT_HOST: qdrant
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      NVIDIA_BASE_URL: ${NVIDIA_BASE_URL}
+      LLM_MODEL: ${LLM_MODEL}
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/query/app:/app/app
+    networks:
+      - contextcore-network
+# ──────────────────────────────────────────────────────────
+  # PROMETHEUS — Metrics collection
+  # Scrapes /metrics from all services every 15s
+  # Dashboard at: http://localhost:9090
+  # ──────────────────────────────────────────────────────────
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: contextcore-prometheus
+    restart: unless-stopped
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.console.libraries=/usr/share/prometheus/console_libraries"
+      - "--web.console.templates=/usr/share/prometheus/consoles"
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infra/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - contextcore-network
+
+  # ──────────────────────────────────────────────────────────
+  # GRAFANA — Metrics visualization dashboards
+  # Dashboard at: http://localhost:3000
+  # Login: admin / admin
+  # ──────────────────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: contextcore-grafana
+    restart: unless-stopped
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./infra/grafana/provisioning:/etc/grafana/provisioning
+    networks:
+      - contextcore-network
+    depends_on:
+      - prometheus

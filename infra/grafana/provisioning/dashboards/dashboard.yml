@@ -1,0 +1,15 @@
+# ============================================================
+# Grafana Dashboard Provider
+# Tells Grafana to load dashboards from a folder
+# ============================================================
+apiVersion: 1
+
+providers:
+  - name: "ContextCore"
+    orgId: 1
+    folder: "ContextCore"
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 10
+    options:
+      path: /var/lib/grafana/dashboards

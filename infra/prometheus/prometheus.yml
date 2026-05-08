@@ -1,0 +1,32 @@
+# ============================================================
+# Prometheus Configuration
+# Prometheus scrapes (pulls) metrics from each service
+# every 15 seconds and stores them as time-series data
+# ============================================================
+global:
+  scrape_interval: 15s      # how often to collect metrics
+  evaluation_interval: 15s  # how often to evaluate alert rules
+
+scrape_configs:
+  # Prometheus monitors itself
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # Scrape the Gateway service
+  - job_name: "gateway"
+    static_configs:
+      - targets: ["gateway:8000"]
+    metrics_path: "/metrics"
+
+  # Scrape the Ingestion service
+  - job_name: "ingestion"
+    static_configs:
+      - targets: ["ingestion:8001"]
+    metrics_path: "/metrics"
+
+  # Scrape the Query service
+  - job_name: "query"
+    static_configs:
+      - targets: ["query:8002"]
+    metrics_path: "/metrics"
