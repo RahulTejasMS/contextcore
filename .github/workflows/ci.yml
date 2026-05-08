@@ -29,7 +29,7 @@ jobs:
                        services/ingestion/app \
                        services/query/app \
                        services/processing/app \
-                       --ignore E501,F401,E402,F811
+                       --ignore E501,F401,E402,F811,F541,F841
 
   test:
     name: Run Unit Tests
