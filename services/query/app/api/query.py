@@ -129,7 +129,7 @@ async def run_query(
 
     # Step 8: Log to PostgreSQL asynchronously
     try:
-        
+        #chunk_ids = [c["point_id"] for c in chunks]
         await db.execute(
             """
             INSERT INTO query_logs
