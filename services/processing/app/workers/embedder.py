@@ -8,9 +8,9 @@ from app.core.config import settings
 
 # Load model once when the worker starts (takes ~5 seconds)
 # After that, embedding is fast (~10ms per chunk)
-print(f"⏳ Loading embedding model: {settings.embedding_model}")
+print("⏳ Loading embedding model: " + settings.embedding_model)
 _model = SentenceTransformer(settings.embedding_model)
-print(f"✅ Embedding model loaded")
+print("✅ Embedding model loaded")
 
 
 def embed_chunks(chunks: list[dict]) -> list[dict]:

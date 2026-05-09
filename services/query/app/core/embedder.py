@@ -5,9 +5,9 @@
 from sentence_transformers import SentenceTransformer
 from app.core.config import settings
 
-print(f"⏳ Loading embedding model: {settings.embedding_model}")
+print("⏳ Loading embedding model: " + settings.embedding_model)
 _model = SentenceTransformer(settings.embedding_model)
-print(f"✅ Embedding model loaded")
+print("✅ Embedding model loaded")
 
 
 def embed_query(query_text: str) -> list[float]:

@@ -69,7 +69,7 @@ async def upload_document(
     if len(file_bytes) > MAX_FILE_SIZE:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File too large. Maximum size is 50MB."
+            detail="File too large. Maximum size is 50MB."
         )
 
     # Step 4: Compute SHA-256 hash for deduplication
