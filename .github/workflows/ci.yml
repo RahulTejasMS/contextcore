@@ -11,6 +11,7 @@ jobs:
   lint:
     name: Lint Python Code
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -35,6 +36,7 @@ jobs:
     name: Run Unit Tests
     runs-on: ubuntu-latest
     needs: lint
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -44,16 +46,38 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install test dependencies
+      # -----------------------------
+      # Install Gateway Dependencies
+      # -----------------------------
+      - name: Install gateway dependencies
         run: |
-          pip install pytest pytest-asyncio pydantic pydantic-settings \
-                      python-jose[cryptography] passlib[bcrypt] tiktoken
+          cd services/gateway
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pytest pytest-asyncio httpx
 
+      # -----------------------------
+      # Run Gateway Tests
+      # -----------------------------
       - name: Run gateway tests
         run: |
           cd services/gateway
           python -m pytest tests/ -v --tb=short
 
+      # -----------------------------
+      # Install Query Dependencies
+      # -----------------------------
+      - name: Install query dependencies
+        run: |
+          cd services/query
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install pytest pytest-asyncio httpx
+
+      # -----------------------------
+      # Run Query Tests
+      # -----------------------------
       - name: Run query tests
         run: |
           cd services/query
@@ -63,6 +87,7 @@ jobs:
     name: Verify Docker Builds
     runs-on: ubuntu-latest
     needs: lint
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
